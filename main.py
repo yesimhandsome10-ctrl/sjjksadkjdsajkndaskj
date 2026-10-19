@@ -135,4 +135,125 @@ if len(selected_features) >= 3:
     with c1:
         x_3d = st.selectbox("X축 속성", options=selected_features, format_func=lambda x: feature_map[x], index=0, key='x_3d')
     with c2:
-        y_3d = st.selectbox("Y축 속
+        y_3d = st.selectbox("Y축 속성", options=selected_features, format_func=lambda x: feature_map[x], index=1, key='y_3d')
+    with c3:
+        z_3d = st.selectbox("Z축 속성", options=selected_features, format_func=lambda x: feature_map[x], index=2, key='z_3d')
+
+    fig_3d = px.scatter_3d(
+        filtered_df,
+        x=x_3d,
+        y=y_3d,
+        z=z_3d,
+        color='cluster',
+        hover_name='movieNm',
+        hover_data={'total_audi': ':,', 'first_scrn': ':,', 'days_in_top10': True, 'long_run': ':.2f'},
+        labels={**feature_map, 'cluster': '유형'},
+        title=f"3차원 영화 유형 분포 (k={n_clusters})",
+        category_orders={'cluster': current_symbols}
+    )
+    fig_3d.update_traces(marker=dict(size=3, opacity=0.8))
+    fig_3d.update_layout(height=650)
+    st.plotly_chart(fig_3d, use_container_width=True)
+else:
+    st.info("ℹ️ 3차원 산점도를 그리려면 클러스터링에 사용된 속성을 **3개 이상** 선택해 주세요.")
+
+# 유형별 통계 요약 표
+st.subheader("📋 묶음별 편수 및 속성 평균 (원래 단위)")
+
+summary_data = []
+for symbol in current_symbols:
+    c_df = filtered_df[filtered_df['cluster'] == symbol]
+    count = len(c_df)
+    mean_scrn = c_df['first_scrn'].mean() if count > 0 else 0
+    mean_audi = c_df['total_audi'].mean() if count > 0 else 0
+    mean_days = c_df['days_in_top10'].mean() if count > 0 else 0
+    mean_long = c_df['long_run'].mean() if count > 0 else 0
+    
+    summary_data.append({
+        '유형': f"유형 {symbol}",
+        '영화 편수': f"{count:,}편",
+        '평균 스크린 수': f"{mean_scrn:,.1f}개",
+        '평균 누적 관객': f"{mean_audi:,.0f}명",
+        '평균 10위권 일수': f"{mean_days:,.1f}일",
+        '평균 롱런 지수': f"{mean_long:,.2f}"
+    })
+
+summary_df = pd.DataFrame(summary_data)
+st.dataframe(summary_df, use_container_width=True)
+
+# 유형별 대표 영화 TOP 5
+st.subheader("🏆 묶음별 누적 관객 TOP 5 영화")
+
+cols = st.columns(min(n_clusters, 4))
+for idx, symbol in enumerate(current_symbols):
+    with cols[idx % 4]:
+        st.markdown(f"#### 유형 {symbol}")
+        top5 = filtered_df[filtered_df['cluster'] == symbol].sort_values(by='total_audi', ascending=False).head(5)
+        for i, row in enumerate(top5.iterrows(), 1):
+            movie = row[1]
+            st.markdown(f"**{i}. {movie['movieNm']}**")
+            st.caption(f"누적: {movie['total_audi']:,}명 / 스크린: {movie['first_scrn']:,}개")
+
+st.markdown("---")
+
+# 엘보우 기법 분석 (Inertia 계산 및 시각화)
+st.subheader("📉 묶음 수(k) 결정 분석 (엘보우 그래프)")
+
+k_list = list(range(1, 8))
+inertia_list = []
+
+for k in k_list:
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    km.fit(X_scaled)
+    inertia_list.append(km.inertia_)
+
+# 감소량 계산
+diff_list = [None]
+for i in range(1, len(inertia_list)):
+    diff = inertia_list[i-1] - inertia_list[i]
+    diff_list.append(diff)
+
+# plotly 엘보우 그래프
+fig_elbow = go.Figure()
+fig_elbow.add_trace(go.Scatter(
+    x=k_list,
+    y=inertia_list,
+    mode='lines+markers',
+    name='군집 내 오차제곱합 (Inertia)',
+    marker=dict(size=8, color='blue'),
+    line=dict(width=2)
+))
+
+# 현재 선택된 k 위치에 세로선 표시
+fig_elbow.add_vline(
+    x=n_clusters,
+    line_width=2,
+    line_dash="dash",
+    line_color="red",
+    annotation_text=f"현재 고른 묶음 수 (k={n_clusters})",
+    annotation_position="top right"
+)
+
+fig_elbow.update_layout(
+    title="묶음 수(k=1~7)에 따른 군집 내 오차제곱합 (Inertia)",
+    xaxis_title="묶음 수 (k)",
+    yaxis_title="오차제곱합 (Inertia)",
+    height=450
+)
+
+st.plotly_chart(fig_elbow, use_container_width=True)
+
+# 묶음 수별 오차제곱합 및 감소량 표
+elbow_table_data = []
+for i, k in enumerate(k_list):
+    val = inertia_list[i]
+    diff_val = diff_list[i]
+    diff_str = f"{diff_val:,.2f}" if diff_val is not None else ""
+    elbow_table_data.append({
+        '묶음 수 (k)': k,
+        '군집 내 오차제곱합 (Inertia)': f"{val:,.2f}",
+        '직전 대비 감소량': diff_str
+    })
+
+elbow_df = pd.DataFrame(elbow_table_data)
+st.dataframe(elbow_df, use_container_width=True)
